@@ -1,117 +1,140 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
+import React, { useState, useEffect } from 'react';
+import { View, Text, Button, FlatList, StyleSheet, PermissionsAndroid, Platform } from 'react-native';
+import BleManager from 'react-native-ble-manager';
+import { NativeEventEmitter, NativeModules } from 'react-native';
+import { widthPercentageToDP as wp, heightPercentageToDP as hp } from 'react-native-responsive-screen';
 
-import React from 'react';
-import type {PropsWithChildren} from 'react';
-import {
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  useColorScheme,
-  View,
-} from 'react-native';
+const BleManagerModule = NativeModules.BleManager;
+const BleManagerEmitter = new NativeEventEmitter(BleManagerModule);
 
-import {
-  Colors,
-  DebugInstructions,
-  Header,
-  LearnMoreLinks,
-  ReloadInstructions,
-} from 'react-native/Libraries/NewAppScreen';
+const App = () => {
+  const [isScanning, setIsScanning] = useState(false);
+  const [peripherals, setPeripherals] = useState(new Map());
 
-type SectionProps = PropsWithChildren<{
-  title: string;
-}>;
+  useEffect(() => {
+    BleManager.start({ showAlert: false });
 
-function Section({children, title}: SectionProps): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
-  return (
-    <View style={styles.sectionContainer}>
-      <Text
-        style={[
-          styles.sectionTitle,
-          {
-            color: isDarkMode ? Colors.white : Colors.black,
-          },
-        ]}>
-        {title}
-      </Text>
-      <Text
-        style={[
-          styles.sectionDescription,
-          {
-            color: isDarkMode ? Colors.light : Colors.dark,
-          },
-        ]}>
-        {children}
-      </Text>
-    </View>
-  );
-}
+    const requestBluetoothPermission = async () => {
+      if (Platform.OS === 'android') {
+        const granted = await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        ]);
 
-function App(): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
+        if (
+          granted['android.permission.BLUETOOTH_SCAN'] === PermissionsAndroid.RESULTS.GRANTED &&
+          granted['android.permission.BLUETOOTH_CONNECT'] === PermissionsAndroid.RESULTS.GRANTED &&
+          granted['android.permission.ACCESS_FINE_LOCATION'] === PermissionsAndroid.RESULTS.GRANTED
+        ) {
+          console.log('Bluetooth permissions granted');
+        } else {
+          console.log('Bluetooth permissions denied');
+        }
+      }
+    };
 
-  const backgroundStyle = {
-    backgroundColor: isDarkMode ? Colors.darker : Colors.lighter,
+    requestBluetoothPermission();
+  }, []);
+
+  const startScan = () => {
+    if (!isScanning) {
+      BleManager.scan([], 10, true)
+        .then(() => {
+          console.log('Scanning...');
+          setIsScanning(true);
+        })
+        .catch((error) => {
+          console.log('Scan error', error);
+        });
+    }
   };
 
-  return (
-    <SafeAreaView style={backgroundStyle}>
-      <StatusBar
-        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor={backgroundStyle.backgroundColor}
+  const handleDiscoverPeripheral = (peripheral) => {
+    if (peripheral.name) {
+      setPeripherals(new Map(peripherals.set(peripheral.id, peripheral)));
+    }
+  };
+
+  useEffect(() => {
+    const discoverPeripheralListener = BleManagerEmitter.addListener(
+      'BleManagerDiscoverPeripheral',
+      handleDiscoverPeripheral
+    );
+
+    return () => {
+      discoverPeripheralListener.remove();
+    };
+  }, [peripherals]);
+
+  const connectToPeripheral = (peripheralId) => {
+    console.log('pressed connect button');
+    BleManager.connect(peripheralId)
+      .then(() => {
+        console.log('Connected to ' + peripheralId);
+      })
+      .catch((error) => {
+        console.log('Connection error', error);
+      });
+  };
+
+  const renderItem = ({ item }) => (
+    <View style={styles.peripheralItem}>
+      <View style={styles.peripheralInfo}>
+        <Text style={styles.peripheralName}>{item.name || 'Unnamed Device'}</Text>
+        <Text style={styles.peripheralId}>{item.id}</Text>
+      </View>
+      <Button
+        title="Connect"
+        onPress={() => connectToPeripheral(item.id)}
+        disabled={isScanning}
+        color="#1E90FF" // Bright button color
       />
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        style={backgroundStyle}>
-        <Header />
-        <View
-          style={{
-            backgroundColor: isDarkMode ? Colors.black : Colors.white,
-          }}>
-          <Section title="Step One">
-            Edit <Text style={styles.highlight}>App.tsx</Text> to change this
-            screen and then come back to see your edits.
-          </Section>
-          <Section title="See Your Changes">
-            <ReloadInstructions />
-          </Section>
-          <Section title="Debug">
-            <DebugInstructions />
-          </Section>
-          <Section title="Learn More">
-            Read the docs to discover what to do next:
-          </Section>
-          <LearnMoreLinks />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+    </View>
   );
-}
+  return (
+    <View style={styles.container}>
+      <Button title="Start Scanning" onPress={startScan} color="#1E90FF"/>
+      <FlatList
+        data={Array.from(peripherals.values())}
+        renderItem={renderItem}
+        keyExtractor={(item) => item.id}
+      />
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
-  sectionContainer: {
-    marginTop: 32,
-    paddingHorizontal: 24,
+  container: {
+    flex: 1,
+    padding: wp('4%'),
+    backgroundColor: '#F0F8FF', // Light background color
   },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: '600',
+  peripheralItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: hp('1%'),
+    paddingVertical: hp('1%'),
+    paddingHorizontal: wp('2%'),
+    borderWidth: 1,
+    borderColor: '#1E90FF', // Bright border color
+    borderRadius: wp('2%'),
+    backgroundColor: '#FFFFFF', // White background for each item
+    marginTop:hp('1%')
   },
-  sectionDescription: {
-    marginTop: 8,
-    fontSize: 18,
-    fontWeight: '400',
+  peripheralInfo: {
+    flexDirection: 'column',
   },
-  highlight: {
-    fontWeight: '700',
+  peripheralName: {
+    fontSize: wp('4%'),
+    color: 'black', // Bright font color
+    marginBottom: hp('0.5%'), // Space between name and id
+    fontWeight:'400'
+  },
+  peripheralId: {
+    fontSize: wp('3.5%'),
+    color: 'green', // Bright font color
   },
 });
 
